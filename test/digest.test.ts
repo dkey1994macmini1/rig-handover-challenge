@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { listNights, readNight } from '../src/digest/reader.js';
 import type { NightDigest } from '../src/digest/types.js';
@@ -147,6 +148,32 @@ describe('readNight', () => {
     expect(digest.counts).toEqual({ ok: 1, retry: 0, fail: 0 });
   });
 
+  it('counts an event whose error is present but not a string, null included', () => {
+    writeNight(
+      [
+        '{"at":"2026-10-28T23:00:00+01:00","job":"lane/sync","status":"fail","error":null}',
+        '{"at":"2026-10-28T23:00:01+01:00","job":"lane/sync","status":"fail","error":"x"}',
+      ].join('\n') + '\n',
+    );
+
+    const digest = digestOf();
+
+    expect(digest.badLines).toBe(1);
+    expect(digest.counts).toEqual({ ok: 0, retry: 0, fail: 1 });
+    expect(digest.rows).toEqual([
+      {
+        job: 'lane/sync',
+        owner: null,
+        runs: 1,
+        retries: 0,
+        status: 'fail',
+        error: 'x',
+        firstAt: '2026-10-28T23:00:01+01:00',
+        lastAt: '2026-10-28T23:00:01+01:00',
+      },
+    ]);
+  });
+
   it('keeps rows whose owner is null or absent and leaves the field null', () => {
     writeNight(
       [
@@ -219,6 +246,92 @@ describe('readNight', () => {
 
     expect(digest.counts).toEqual({ ok: 1, retry: 2, fail: 1 });
     expect(digest.rows[0]).toMatchObject({ job: 'fixtures/refresh', runs: 3, retries: 2, status: 'ok' });
+  });
+
+  it('follows source-line order when the timestamps disagree with it', () => {
+    writeNight(
+      [
+        '{"at":"2026-10-29T05:00:00+01:00","job":"lane/sync","status":"ok","owner":"rook"}',
+        '{"at":"2026-10-28T23:00:00+01:00","job":"lane/sync","status":"retry","owner":"rook","error":"lock held"}',
+      ].join('\n') + '\n',
+    );
+
+    const digest = digestOf();
+
+    // The later line is the earlier timestamp: first/last are where the lines were, not where time was.
+    expect(digest.rows).toEqual([
+      {
+        job: 'lane/sync',
+        owner: 'rook',
+        runs: 2,
+        retries: 1,
+        status: 'retry',
+        error: 'lock held',
+        firstAt: '2026-10-29T05:00:00+01:00',
+        lastAt: '2026-10-28T23:00:00+01:00',
+      },
+    ]);
+  });
+
+  it('clears a job\'s owner and error when its last valid event carries neither', () => {
+    writeNight(
+      [
+        '{"at":"2026-10-29T01:30:00+01:00","job":"fixtures/refresh","status":"retry","owner":"rook","error":"upstream 503"}',
+        '{"at":"2026-10-29T01:37:00+01:00","job":"fixtures/refresh","status":"ok"}',
+        '{"at":"2026-10-29T02:00:00+01:00","job":"lane/sync","status":"retry","owner":"rook","error":"lock held"}',
+        '{"at":"2026-10-29T02:01:00+01:00","job":"lane/sync","status":"ok","owner":null}',
+      ].join('\n') + '\n',
+    );
+
+    const digest = digestOf();
+
+    // Omitted and explicit null both clear the owner; an omitted error clears the error too.
+    // (`error: null` is off-shape now, so it is not how a log clears an error.)
+    expect(digest.rows).toEqual([
+      {
+        job: 'fixtures/refresh',
+        owner: null,
+        runs: 2,
+        retries: 1,
+        status: 'ok',
+        error: null,
+        firstAt: '2026-10-29T01:30:00+01:00',
+        lastAt: '2026-10-29T01:37:00+01:00',
+      },
+      {
+        job: 'lane/sync',
+        owner: null,
+        runs: 2,
+        retries: 1,
+        status: 'ok',
+        error: null,
+        firstAt: '2026-10-29T02:00:00+01:00',
+        lastAt: '2026-10-29T02:01:00+01:00',
+      },
+    ]);
+  });
+
+  it('ends a fail, ok, fail sequence on fail and counts only retry events as retries', () => {
+    writeNight(
+      [
+        '{"at":"2026-10-29T04:00:01+01:00","job":"notes/backup","status":"fail","owner":"lane-07","error":"quota exceeded"}',
+        '{"at":"2026-10-29T04:10:01+01:00","job":"notes/backup","status":"retry","owner":"lane-07","error":"quota exceeded"}',
+        '{"at":"2026-10-29T04:20:01+01:00","job":"notes/backup","status":"ok","owner":"lane-07"}',
+        '{"at":"2026-10-29T04:30:01+01:00","job":"notes/backup","status":"fail","owner":"lane-07","error":"quota exceeded"}',
+      ].join('\n') + '\n',
+    );
+
+    const digest = digestOf();
+
+    expect(digest.counts).toEqual({ ok: 1, retry: 1, fail: 2 });
+    expect(digest.rows[0]).toMatchObject({
+      job: 'notes/backup',
+      runs: 4,
+      retries: 1,
+      status: 'fail',
+      error: 'quota exceeded',
+      lastAt: '2026-10-29T04:30:01+01:00',
+    });
   });
 
   it('keeps timestamp strings exactly as written, offsets included', () => {
@@ -296,11 +409,47 @@ describe('readNight', () => {
     expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
   });
 
-  it('reports a FIFO with no writer as unreadable without blocking', () => {
-    execFileSync('mkfifo', [join(runsDir, '2026-10-28.jsonl')]);
+  it('reports a night past the size cap as unreadable and reads one under it', () => {
+    const file = join(runsDir, '2026-10-28.jsonl');
+    writeNight('{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok"}\n');
+
+    // Under the cap, a real night reads as usual.
+    expect(digestOf().rows).toHaveLength(1);
+
+    // Sparse, so the cap costs no disk: the size alone is what the reader refuses.
+    truncateSync(file, 4 * 1024 * 1024 + 1);
 
     expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
-  }, 2_000);
+  });
+
+  // A synchronous open that blocks cannot be interrupted by a Vitest timeout, so this read runs in
+  // a child of its own: the parent kills it and fails if the answer does not come back in time.
+  it('reports a FIFO with no writer as unreadable without blocking', async () => {
+    const fifo = join(runsDir, '2026-10-28.jsonl');
+    execFileSync('mkfifo', [fifo]);
+
+    const reader = pathToFileURL(join(process.cwd(), 'src', 'digest', 'reader.ts')).href;
+    const script =
+      `import(${JSON.stringify(reader)}).then(({ readNight }) => ` +
+      `process.stdout.write(JSON.stringify(readNight(${JSON.stringify(runsDir)}, '2026-10-28'))));`;
+    const child = spawn(process.execPath, ['--import', 'tsx', '--eval', script], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+    const chunks: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const started = Date.now();
+    let timedOut = false;
+    const killer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, 3_000);
+    const exitCode = await new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+    clearTimeout(killer);
+
+    expect(timedOut).toBe(false);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(exitCode).toBe(0);
+    expect(Buffer.concat(chunks).toString()).toBe(JSON.stringify({ ok: false, reason: 'unreadable' }));
+  }, 10_000);
 });
 
 describe('listNights', () => {
@@ -312,14 +461,21 @@ describe('listNights', () => {
     mkdirSync(join(runsDir, '2026-10-30.jsonl'));
     symlinkSync(join(runsDir, '2026-10-28.jsonl'), join(runsDir, '2026-10-31.jsonl'));
 
-    expect(listNights(runsDir)).toEqual(['2026-11-01', '2026-10-28', '2026-10-27']);
+    expect(listNights(runsDir)).toEqual({ ok: true, nights: ['2026-11-01', '2026-10-28', '2026-10-27'] });
   });
 
-  it('lists no nights when the runs directory is not there', () => {
-    expect(listNights(join(runsDir, 'no-such-dir'))).toEqual([]);
+  it('reports a runs directory that is not there as not listable, not as an empty list', () => {
+    expect(listNights(join(runsDir, 'no-such-dir'))).toEqual({ ok: false });
+  });
+
+  it('reports a runs path that is a file, not a directory, as not listable', () => {
+    const notADirectory = join(runsDir, 'not-a-directory');
+    writeFileSync(notADirectory, '');
+
+    expect(listNights(notADirectory)).toEqual({ ok: false });
   });
 
   it('lists the checked-in nights newest first', () => {
-    expect(listNights('runs')).toEqual(['2026-10-28', '2026-10-27']);
+    expect(listNights('runs')).toEqual({ ok: true, nights: ['2026-10-28', '2026-10-27'] });
   });
 });

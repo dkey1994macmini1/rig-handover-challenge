@@ -11,17 +11,23 @@ export type Status = {
   installed: string;
   lastBeat: Beat | null;
   nights: NightSummary[];
+  /** False when runs/ could not be listed at all: the board says that, not "nothing in runs/". */
+  nightsReadable: boolean;
 };
 
 export function readStatus(config: RigConfig): Status {
+  const listed = listNights(config.runsDir);
   return {
     adapter: config.adapter,
     installed: config.installed,
     lastBeat: lastBeat(),
-    // Same file policy as the digest routes: the board links exactly the nights the reader lists.
-    nights: listNights(config.runsDir).map((night) => {
-      const read = readNight(config.runsDir, night);
-      return { night, counts: read.ok ? read.digest.counts : null };
-    }),
+    nightsReadable: listed.ok,
+    // A night whose bytes cannot be read keeps its link and shows the em dash for every count.
+    nights: listed.ok
+      ? listed.nights.map((night) => {
+          const read = readNight(config.runsDir, night);
+          return { night, counts: read.ok ? read.digest.counts : null };
+        })
+      : [],
   };
 }

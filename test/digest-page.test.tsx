@@ -1,45 +1,27 @@
-import { copyFileSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
-
-/** The real night, copied into a temp directory: runs/ is read-only and never written. */
-const FIXTURE = join('runs', '2026-10-28.jsonl');
-const NIGHT = '2026-10-28';
+import { NIGHT, copyFixture, request, rowsOf, tempRuns } from './support/nights.js';
 
 let runsDir: string;
 
 beforeEach(() => {
-  runsDir = mkdtempSync(join(tmpdir(), 'rig-page-'));
+  runsDir = tempRuns('rig-page-');
 });
 
 afterEach(() => {
   rmSync(runsDir, { recursive: true, force: true });
 });
 
-function copyFixture(night = NIGHT): void {
-  copyFileSync(FIXTURE, join(runsDir, `${night}.jsonl`));
-}
-
 /** The page as a browser sees it: status and raw markup, through the app's own request seam. */
 async function get(path: string): Promise<{ status: number; html: string }> {
-  const res = await createApp({ adapter: 'shim', installed: '2026-10-29T14:06:00+01:00', beatEverySeconds: 60, runsDir }).request(path);
-  return { status: res.status, html: await res.text() };
-}
-
-/** Each table body row with its raw markup and its cell contents, in document order. */
-function rowsOf(html: string): { markup: string; cells: string[] }[] {
-  const body = html.slice(html.indexOf('<tbody>'), html.indexOf('</tbody>'));
-  return [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].map((row) => ({
-    markup: row[0],
-    cells: [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1]),
-  }));
+  const { status, text } = await request(runsDir, path);
+  return { status, html: text };
 }
 
 describe('GET /digest/:night', () => {
   it('renders one row per job, sorted by job', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { status, html } = await get(`/digest/${NIGHT}`);
 
@@ -57,7 +39,7 @@ describe('GET /digest/:night', () => {
   });
 
   it('shows a missing owner as an em dash instead of an empty cell', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { html } = await get(`/digest/${NIGHT}`);
 
@@ -66,8 +48,20 @@ describe('GET /digest/:night', () => {
     expect(rowsOf(html).find((row) => row.cells[0] === 'lane/sync')?.cells[1]).toBe('rook');
   });
 
+  it('shows an empty-string owner and error as an em dash, not an empty cell', async () => {
+    writeFileSync(
+      join(runsDir, `${NIGHT}.jsonl`),
+      JSON.stringify({ at: '2026-10-28T23:00:02+01:00', job: 'lane/sync', status: 'fail', owner: '', error: '' }) + '\n',
+    );
+
+    const { html } = await get(`/digest/${NIGHT}`);
+
+    const row = rowsOf(html).find((row) => row.cells[0] === 'lane/sync');
+    expect([row?.cells[1], row?.cells[5]]).toEqual(['—', '—']);
+  });
+
   it('marks a row with three or more retries while keeping the count readable', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { html } = await get(`/digest/${NIGHT}`);
 
@@ -77,8 +71,38 @@ describe('GET /digest/:night', () => {
     expect(rowsOf(html).find((row) => row.cells[0] === 'lane/sync')?.markup).not.toContain('class="warn"');
   });
 
+  it('marks a row from three retries on, and not at one or two', async () => {
+    const retryLine = (minute: number) =>
+      JSON.stringify({
+        at: `2026-10-29T01:${String(minute).padStart(2, '0')}:00+01:00`,
+        job: 'fixtures/refresh',
+        status: 'retry',
+        owner: 'rook',
+        error: 'upstream 503',
+      }) + '\n';
+    const okLine = JSON.stringify({ at: '2026-10-29T01:37:00+01:00', job: 'fixtures/refresh', status: 'ok', owner: 'rook' }) + '\n';
+
+    const marks: (string | boolean)[][] = [];
+    for (const retries of [1, 2, 3, 4]) {
+      writeFileSync(
+        join(runsDir, `${NIGHT}.jsonl`),
+        Array.from({ length: retries }, (_, index) => retryLine(index)).join('') + okLine,
+      );
+
+      const row = rowsOf((await get(`/digest/${NIGHT}`)).html).find((candidate) => candidate.cells[0] === 'fixtures/refresh');
+      marks.push([String(retries), row?.cells[3] ?? 'no row', row?.markup.includes('class="warn"') ?? false]);
+    }
+
+    expect(marks).toEqual([
+      ['1', '1', false],
+      ['2', '2', false],
+      ['3', '3', true],
+      ['4', '4', true],
+    ]);
+  });
+
   it('marks a failing job and shows its run count, status, error and times', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { html } = await get(`/digest/${NIGHT}`);
 
@@ -107,7 +131,7 @@ describe('GET /digest/:night', () => {
   });
 
   it('counts unreadable lines in a muted note without dropping the night', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const fixturePage = await get(`/digest/${NIGHT}`);
     expect(fixturePage.html).toContain('<p class="mute">1 line unreadable</p>');

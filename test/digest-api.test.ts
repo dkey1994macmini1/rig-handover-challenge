@@ -1,79 +1,36 @@
-import { copyFileSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
-
-/** The real night, copied into a temp directory: runs/ is read-only and never written. */
-const FIXTURE = join('runs', '2026-10-28.jsonl');
-const NIGHT = '2026-10-28';
-
-/** One row as the JSON body carries it: the page's eight columns, same names, same values. */
-type ApiRow = {
-  job: string;
-  owner: string | null;
-  runs: number;
-  retries: number;
-  status: string;
-  error: string | null;
-  firstAt: string;
-  lastAt: string;
-};
-
-type ApiNight = { night: string; rows: ApiRow[]; badLines: number };
+import { NIGHT, cellsOf, copyFixture, parseNight, request, rowsOf, tempRuns, writeNight } from './support/nights.js';
 
 let runsDir: string;
 
 beforeEach(() => {
-  runsDir = mkdtempSync(join(tmpdir(), 'rig-json-'));
+  runsDir = tempRuns('rig-json-');
 });
 
 afterEach(() => {
   rmSync(runsDir, { recursive: true, force: true });
 });
 
-function copyFixture(night = NIGHT): void {
-  copyFileSync(FIXTURE, join(runsDir, `${night}.jsonl`));
-}
-
 /** The API through the app's own request seam — the same app the page is served by. */
-async function raw(path: string): Promise<{ status: number; text: string }> {
-  const res = await createApp({
-    adapter: 'shim',
-    installed: '2026-10-29T14:06:00+01:00',
-    beatEverySeconds: 60,
-    runsDir,
-  }).request(path);
-  return { status: res.status, text: await res.text() };
-}
+const raw = (path: string) => request(runsDir, path);
 
 /** A night the API answers in full: status, the raw body and the parsed object. */
-async function get(path: string): Promise<{ status: number; body: ApiNight; text: string }> {
+async function get(path: string) {
   const { status, text } = await raw(path);
-  return { status, body: JSON.parse(text) as ApiNight, text };
-}
-
-/** The page's table body as cell text, in document order — the same columns the JSON names. */
-function pageCells(html: string): string[][] {
-  const body = html.slice(html.indexOf('<tbody>'), html.indexOf('</tbody>'));
-  return [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].map((row) =>
-    [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1]),
-  );
-}
-
-/** One API row as the page renders it: a missing value is the em dash, numbers as text. */
-function asPageCells(row: ApiRow): string[] {
-  return [row.job, row.owner ?? '—', String(row.runs), String(row.retries), row.status, row.error ?? '—', row.firstAt, row.lastAt];
+  return { status, body: parseNight(text), text };
 }
 
 describe('GET /api/digest/:night', () => {
   it('answers the night as JSON: one row per job, sorted by job, bad lines counted', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { status, body } = await get(`/api/digest/${NIGHT}`);
 
     expect(status).toBe(200);
-    expect(Object.keys(body)).toEqual(['night', 'rows', 'badLines']);
+    // The key set, sorted on both sides: what the body carries, not the order JSON happened to use.
+    expect(Object.keys(body).sort()).toEqual(['badLines', 'night', 'rows']);
     expect(body.night).toBe(NIGHT);
     expect(body.rows.map((row) => row.job)).toEqual([
       'digest/render',
@@ -86,7 +43,7 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('carries every row field the page renders, nulls kept and timestamp offsets verbatim', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const { body, text } = await get(`/api/digest/${NIGHT}`);
 
@@ -148,8 +105,8 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('counts malformed and off-shape lines and leaves them out of the rows', async () => {
-    writeFileSync(
-      join(runsDir, `${NIGHT}.jsonl`),
+    writeNight(
+      runsDir,
       [
         '{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok","owner":"rook"}',
         'not json at all',
@@ -190,8 +147,8 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('keeps each timestamp exactly as the log wrote it, offset included', async () => {
-    writeFileSync(
-      join(runsDir, `${NIGHT}.jsonl`),
+    writeNight(
+      runsDir,
       [
         '{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok"}',
         '{"at":"2026-10-29T05:00:04-04:00","job":"lane/sync","status":"ok"}',
@@ -215,7 +172,7 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('answers an empty night with 200 and no rows', async () => {
-    writeFileSync(join(runsDir, `${NIGHT}.jsonl`), '');
+    writeNight(runsDir, '');
 
     const { status, body } = await get(`/api/digest/${NIGHT}`);
 
@@ -230,7 +187,7 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('answers 404 for a name that is not a night and writes nothing', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     // `../2026-10-28` is normalized away before the handler; `..%2F` reaches the night-name
     // policy as `../2026-10-28` and is refused there, so traversal is refused in both layers.
@@ -254,15 +211,15 @@ describe('GET /api/digest/:night', () => {
   });
 
   it('shows the page and the JSON the same jobs in the same order with the same values', async () => {
-    copyFixture();
+    copyFixture(runsDir);
 
     const api = await get(`/api/digest/${NIGHT}`);
     const page = await raw(`/digest/${NIGHT}`);
 
     expect(api.status).toBe(200);
     expect(page.status).toBe(200);
-    expect(pageCells(page.text).map((cells) => cells[0])).toEqual(api.body.rows.map((row) => row.job));
-    expect(pageCells(page.text)).toEqual(api.body.rows.map(asPageCells));
+    expect(rowsOf(page.text).map((row) => row.cells[0])).toEqual(api.body.rows.map((row) => row.job));
+    expect(rowsOf(page.text).map((row) => row.cells)).toEqual(api.body.rows.map(cellsOf));
     expect(page.text).toContain(`<p class="mute">${api.body.badLines} line unreadable</p>`);
   });
 });

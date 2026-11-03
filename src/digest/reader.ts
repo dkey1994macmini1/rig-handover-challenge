@@ -6,9 +6,18 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, read
 import { join } from 'node:path';
 import type { DigestRow, DigestStatus, EventCounts, NightDigest, NightRead } from './types.js';
 
-const NIGHT = /^\d{4}-\d{2}-\d{2}$/;
-const NIGHT_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
+// The night-name rule, written once: the night a route may ask for and the file the board may list
+// both derive from it, so the 404 policy and the listing cannot drift apart.
+const NIGHT_PATTERN = '\\d{4}-\\d{2}-\\d{2}';
+const NIGHT = new RegExp(`^${NIGHT_PATTERN}$`);
+const NIGHT_FILE = new RegExp(`^${NIGHT_PATTERN}\\.jsonl$`);
+const NIGHT_SUFFIX = '.jsonl';
 const STATUSES: readonly DigestStatus[] = ['ok', 'retry', 'fail'];
+
+// The digest routes are unauthenticated and read a whole run log synchronously, so one oversized
+// file must not be able to stall the lane's resident service. 4 MiB is far past a real night and
+// well under anything that would hurt; a bigger file is a fault, not a digest.
+const MAX_NIGHT_BYTES = 4 * 1024 * 1024;
 
 type Event = { at: string; job: string; status: DigestStatus; owner: string | null; error: string | null };
 
@@ -17,10 +26,16 @@ export function readNight(runsDir: string, night: string): NightRead {
   try {
     // Never follow a symlink out of runsDir, never block on a FIFO with no writer, and judge the
     // type of the descriptor we actually opened rather than a second lookup of the path.
-    const fd = openSync(join(runsDir, `${night}.jsonl`), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const file = join(runsDir, `${night}${NIGHT_SUFFIX}`);
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
-      if (!fstatSync(fd).isFile()) return { ok: false, reason: 'unreadable' };
-      return { ok: true, digest: digestNight(night, readFileSync(fd, 'utf8')) };
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) return { ok: false, reason: 'unreadable' };
+      if (stat.size > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
+      const text = readFileSync(fd, 'utf8');
+      // The file can have grown between the fstat and the read: judge the bytes we actually got.
+      if (Buffer.byteLength(text) > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
+      return { ok: true, digest: digestNight(night, text) };
     } finally {
       closeSync(fd);
     }
@@ -32,21 +47,23 @@ export function readNight(runsDir: string, night: string): NightRead {
 
 /**
  * Nights on disk, newest first, under the same file policy as readNight: matching names whose
- * directory entry is a regular file. The board links exactly these (issue 4).
+ * directory entry is a regular file. The board links exactly these (issue 4). A runs directory that
+ * cannot be listed is not an empty night list, and the board must say so.
  */
-export function listNights(runsDir: string): string[] {
+export function listNights(runsDir: string): { ok: true; nights: string[] } | { ok: false } {
   let names: string[];
   try {
     names = readdirSync(runsDir);
   } catch {
-    return [];
+    return { ok: false };
   }
-  return names
+  const nights = names
     .filter((name) => NIGHT_FILE.test(name))
-    .map((name) => name.slice(0, 10))
-    .filter((night) => isRegularFile(join(runsDir, `${night}.jsonl`)))
+    .map((name) => name.slice(0, -NIGHT_SUFFIX.length))
+    .filter((night) => isRegularFile(join(runsDir, `${night}${NIGHT_SUFFIX}`)))
     .sort()
     .reverse();
+  return { ok: true, nights };
 }
 
 /** lstat, so a symlink to a night file is never listed as a night. */
@@ -102,7 +119,6 @@ function digestNight(night: string, text: string): NightDigest {
   return { night, rows, badLines, counts };
 }
 
-/** One JSON object per line; anything else — unparsable or off-shape — is not an event. */
 function parseEvent(line: string): Event | null {
   let value: unknown;
   try {
@@ -116,7 +132,8 @@ function parseEvent(line: string): Event | null {
   if (typeof at !== 'string' || typeof job !== 'string') return null;
   if (!STATUSES.includes(status as DigestStatus)) return null;
   if (owner !== undefined && owner !== null && typeof owner !== 'string') return null;
-  if (error !== undefined && error !== null && typeof error !== 'string') return null;
+  // The spec makes error an optional *string*: a present null is off-shape, unlike owner.
+  if (error !== undefined && typeof error !== 'string') return null;
 
   return {
     at,

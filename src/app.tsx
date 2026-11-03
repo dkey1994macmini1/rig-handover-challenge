@@ -3,7 +3,7 @@ import { loadConfig, type RigConfig } from './config.js';
 import { loadNightDigest } from './digest/load.js';
 import { lane } from './lane.js';
 import { readStatus } from './status.js';
-import { Digest } from './views/digest.js';
+import { Digest, DigestUnreadable } from './views/digest.js';
 import { Layout } from './views/layout.js';
 import { StatusBoard } from './views/status.js';
 
@@ -26,22 +26,12 @@ export function createApp(config: RigConfig = loadConfig()) {
     if (!loaded.ok && loaded.status === 404) return c.notFound();
     return c.html(
       <Layout title={`digest ${night}`} lane={lane()}>
-        {loaded.ok ? (
-          <Digest digest={loaded.digest} />
-        ) : (
-          // A fault, not a missing night: one line, never a stack trace or a path.
-          <>
-            <h1>digest {night}</h1>
-            <p class="warn">this night could not be read</p>
-          </>
-        )}
+        {loaded.ok ? <Digest digest={loaded.digest} /> : <DigestUnreadable night={night} />}
       </Layout>,
       loaded.ok ? 200 : 500,
     );
   });
 
-  // The same night, the same reader, the same 404-vs-500: the JSON body carries only what the
-  // page shows — the night, its sorted rows and the lines it could not read.
   app.get('/api/digest/:night', (c) => {
     const loaded = loadNightDigest(config.runsDir, c.req.param('night'));
     if (!loaded.ok) return c.body(null, loaded.status);

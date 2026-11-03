@@ -98,10 +98,28 @@ describe('status board nights', () => {
     expect(html).not.toContain('notes.txt');
   });
 
-  it('shows nothing in runs/ when the runs directory is not there', async () => {
-    const html = await board({ runsDir: join(runsDir, 'no-such-dir') });
+  it('shows nothing in runs/ for a runs directory that is there and empty', async () => {
+    const html = await board();
 
     expect(html).toContain('nothing in runs/');
+    expect(html).not.toContain('/digest/');
+  });
+
+  it('says runs/ could not be read, not nothing in runs/, when the runs path is a file', async () => {
+    const notADirectory = join(runsDir, 'not-a-directory');
+    writeFileSync(notADirectory, '');
+
+    const html = await board({ runsDir: notADirectory });
+
+    expect(html).toContain('runs/ could not be read');
+    expect(html).not.toContain('nothing in runs/');
+    expect(html).not.toContain('/digest/');
+  });
+
+  it('says runs/ could not be read when the runs directory is not there', async () => {
+    const html = await board({ runsDir: join(runsDir, 'no-such-dir') });
+
+    expect(html).toContain('runs/ could not be read');
     expect(html).not.toContain('/digest/');
   });
 

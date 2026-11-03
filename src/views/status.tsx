@@ -16,7 +16,7 @@ export function StatusBoard({ status }: { status: Status }) {
       </table>
       <h2>nights on disk</h2>
       {status.nights.length === 0 ? (
-        <p class="mute">nothing in runs/</p>
+        <p class="mute">{status.nightsReadable ? 'nothing in runs/' : 'runs/ could not be read'}</p>
       ) : (
         <ul>
           {status.nights.map(({ night, counts }) => (
