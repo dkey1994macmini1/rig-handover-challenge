@@ -1,4 +1,4 @@
-// Reads one night's run log (plan.md § 1). Section 2 — page, JSON and board — reads nights only
+// Reads one night's run log (2026-10-29-morning-digest, § 1). Section 2 — page, JSON and board — reads nights only
 // through here, so the filename policy, the file type policy and the event semantics live in one
 // place.
 

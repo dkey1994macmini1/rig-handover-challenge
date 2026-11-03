@@ -1,8 +1,9 @@
 ---
 plan: morning-digest
-status: ready
+status: done
 owner: rook
 opened: 2026-10-29
+closed: 2026-11-03
 ---
 
 # Morning digest
@@ -77,3 +78,20 @@ page again with `LANE_MARKER` unset (the banner reads "no marker set") and uploa
 link. Move this plan to `docs/plans/done/` with its issue list.
 
 Done when: the preview link no longer shows the lane marker.
+
+## Issues
+
+| # | Issue | Blocked by | Worker | Closed |
+|---|-------|-----------|--------|--------|
+| 1 | Run log reader | — | pi · deepseek-v4.1-flash · high | 2026-11-03 |
+| 2 | Digest page | #1 | pi · deepseek-v4.1-flash · high | 2026-11-03 |
+| 3 | Digest JSON | #1 | pi · deepseek-v4.1-flash · high | 2026-11-03 |
+| 4 | Board night links and counts | #1, #2 | pi · deepseek-v4.1-flash · high | 2026-11-03 |
+| 5 | Digest route tests | #2, #3 | pi · deepseek-v4.1-flash · high | 2026-11-03 |
+| 6 | Publish review preview | #1–#5 | pi · deepseek-v4.1-flash · high | open |
+| 7 | Remove preview marker and archive plan | #6 | pi · deepseek-v4.1-flash · high | open |
+
+#1–#5 closed with their closing comments when the work landed on `main`; #6 and #7 were still open
+when this plan was archived, and closing them is an outward action that needs its own approval. The
+digest went to review as one self-contained page capture, and the same public URL was replaced with a
+marker-free capture afterwards; ADR 0003 applies, so neither the link nor any marker is recorded here.

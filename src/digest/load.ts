@@ -1,4 +1,4 @@
-// One night, one answer (plan.md § 2). Page and JSON both come through here, so a night that is
+// One night, one answer (2026-10-29-morning-digest, § 2). Page and JSON both come through here, so a night that is
 // missing, invalid or unreadable maps to the same HTTP status everywhere.
 
 import { readNight } from './reader.js';

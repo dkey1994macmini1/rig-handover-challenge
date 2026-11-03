@@ -1,4 +1,4 @@
-// The digest contract (plan.md § 1). Section 2 — page, JSON and board — builds on these types
+// The digest contract (2026-10-29-morning-digest, § 1). Section 2 — page, JSON and board — builds on these types
 // alone, so the reader's shape is agreed before a single route exists.
 
 export type DigestStatus = 'ok' | 'retry' | 'fail';
