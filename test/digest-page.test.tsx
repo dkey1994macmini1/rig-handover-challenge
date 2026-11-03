@@ -60,28 +60,35 @@ describe('GET /digest/:night', () => {
     expect([row?.cells[1], row?.cells[5]]).toEqual(['—', '—']);
   });
 
-  it('labels every digest cell so a narrow screen can stack the table without losing a field', async () => {
+  it('labels every digest cell with its own column name, in column order', async () => {
     copyFixture(runsDir);
 
     const { html } = await get(`/digest/${NIGHT}`);
     const headers = [...html.matchAll(/<th>([^<]+)<\/th>/g)].map((match) => match[1]);
-    const labels = [...html.matchAll(/<td data-label="([^"]*)"/g)].map((match) => match[1]);
-
-    // Eight columns, five rows: every cell carries its column's name, in column order.
     expect(headers).toEqual(['job', 'owner', 'runs', 'retries', 'last status', 'last error', 'first', 'last']);
-    expect(labels).toEqual([...headers, ...headers, ...headers, ...headers, ...headers]);
+
+    const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((body) => body.includes('<td'));
+    expect(rows).toHaveLength(5);
+    for (const body of rows) {
+      const cells = [...body.matchAll(/<td\b([^>]*)>([\s\S]*?)<\/td>/g)];
+      // Every cell, not just some: the stacked layout reads its name from this attribute.
+      expect(cells).toHaveLength(headers.length);
+      expect(cells.map((cell) => cell[1].match(/data-label="([^"]*)"/)?.[1])).toEqual(headers);
+      expect(cells.every((cell) => cell[2].trim() !== '')).toBe(true);
+    }
   });
 
-  it('contains the table on a narrow screen instead of letting it run off the page', async () => {
+  it('declares the narrow-screen stacked rule in the one stylesheet, next to the table it targets', async () => {
     copyFixture(runsDir);
 
     const { html } = await get(`/digest/${NIGHT}`);
+    const style = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
 
-    // The page's only table opts into the stacked layout, and the layout supplies the rule.
-    expect(html).toContain('<table class="digest">');
-    expect(html).toContain('@media (max-width: 40rem)');
-    expect(html).toContain('content: attr(data-label)');
-    expect(html).toContain('overflow-x: auto');
+    expect(html).toMatch(/<table[^>]*class="digest"/);
+    expect(style).toMatch(/@media \(max-width: 40rem\)/);
+    expect(style).toContain('content: attr(data-label)');
+    // Any table too wide for the page scrolls inside main instead of pushing the page sideways.
+    expect(style).toContain('overflow-x: auto');
   });
 
   it('marks a row with three or more retries while keeping the count readable', async () => {

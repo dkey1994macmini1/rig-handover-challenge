@@ -12,7 +12,7 @@ const css = `
   header .marker { margin-left: auto; color: var(--mute); }
   main { padding: 1.25rem; max-width: 60rem; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: .35rem .75rem .35rem 0; border-bottom: 1px solid var(--line); }
+  th, td { text-align: left; padding: .35rem .75rem .35rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
   th { color: var(--mute); font-weight: normal; }
   /* A phone stacks the digest's eight columns into labelled lines from the same data, so no field
      runs off the page and nothing is dropped (a value can wrap, it never hides). */
