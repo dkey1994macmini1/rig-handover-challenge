@@ -40,5 +40,14 @@ export function createApp(config: RigConfig = loadConfig()) {
     );
   });
 
+  // The same night, the same reader, the same 404-vs-500: the JSON body carries only what the
+  // page shows — the night, its sorted rows and the lines it could not read.
+  app.get('/api/digest/:night', (c) => {
+    const loaded = loadNightDigest(config.runsDir, c.req.param('night'));
+    if (!loaded.ok) return c.body(null, loaded.status);
+    const { night, rows, badLines } = loaded.digest;
+    return c.json({ night, rows, badLines });
+  });
+
   return app;
 }
