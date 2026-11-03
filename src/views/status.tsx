@@ -16,11 +16,15 @@ export function StatusBoard({ status }: { status: Status }) {
       </table>
       <h2>nights on disk</h2>
       {status.nights.length === 0 ? (
-        <p class="mute">nothing in runs/</p>
+        <p class="mute">{status.nightsReadable ? 'nothing in runs/' : 'runs/ could not be read'}</p>
       ) : (
         <ul>
-          {status.nights.map((n) => (
-            <li>{n}</li>
+          {status.nights.map(({ night, counts }) => (
+            <li>
+              <a href={`/digest/${night}`}>{night}</a>{' '}
+              {/* Valid events over the whole night: a retry that later succeeded still counts. */}
+              <span class="mute">ok {counts ? counts.ok : '—'} · retry {counts ? counts.retry : '—'} · fail {counts ? counts.fail : '—'}</span>
+            </li>
           ))}
         </ul>
       )}
