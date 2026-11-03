@@ -60,6 +60,30 @@ describe('GET /digest/:night', () => {
     expect([row?.cells[1], row?.cells[5]]).toEqual(['—', '—']);
   });
 
+  it('labels every digest cell so a narrow screen can stack the table without losing a field', async () => {
+    copyFixture(runsDir);
+
+    const { html } = await get(`/digest/${NIGHT}`);
+    const headers = [...html.matchAll(/<th>([^<]+)<\/th>/g)].map((match) => match[1]);
+    const labels = [...html.matchAll(/<td data-label="([^"]*)"/g)].map((match) => match[1]);
+
+    // Eight columns, five rows: every cell carries its column's name, in column order.
+    expect(headers).toEqual(['job', 'owner', 'runs', 'retries', 'last status', 'last error', 'first', 'last']);
+    expect(labels).toEqual([...headers, ...headers, ...headers, ...headers, ...headers]);
+  });
+
+  it('contains the table on a narrow screen instead of letting it run off the page', async () => {
+    copyFixture(runsDir);
+
+    const { html } = await get(`/digest/${NIGHT}`);
+
+    // The page's only table opts into the stacked layout, and the layout supplies the rule.
+    expect(html).toContain('<table class="digest">');
+    expect(html).toContain('@media (max-width: 40rem)');
+    expect(html).toContain('content: attr(data-label)');
+    expect(html).toContain('overflow-x: auto');
+  });
+
   it('marks a row with three or more retries while keeping the count readable', async () => {
     copyFixture(runsDir);
 

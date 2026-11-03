@@ -1,6 +1,6 @@
-import type { NightDigest } from '../digest/types.js';
+import type { DigestRow, NightDigest } from '../digest/types.js';
 
-/** The styleguide's em dash: a field the log left empty reads like one it never carried. */
+/** The styleguide's em dash: absent, null and empty all read the same way. */
 const orDash = (text: string | null | undefined) => (text === undefined || text === null || text === '' ? '—' : text);
 
 /**
@@ -16,6 +16,21 @@ export function DigestUnreadable({ night }: { night: string }) {
   );
 }
 
+/**
+ * The eight columns, named once: the header and every cell's `data-label` come from this list, so a
+ * stacked narrow-screen row cannot label a value with the wrong column.
+ */
+const COLUMNS: { label: string; cell: (row: DigestRow) => string }[] = [
+  { label: 'job', cell: (row) => row.job },
+  { label: 'owner', cell: (row) => orDash(row.owner) },
+  { label: 'runs', cell: (row) => String(row.runs) },
+  { label: 'retries', cell: (row) => String(row.retries) },
+  { label: 'last status', cell: (row) => row.status },
+  { label: 'last error', cell: (row) => orDash(row.error) },
+  { label: 'first', cell: (row) => row.firstAt },
+  { label: 'last', cell: (row) => row.lastAt },
+];
+
 export function Digest({ digest }: { digest: NightDigest }) {
   return (
     <>
@@ -23,30 +38,20 @@ export function Digest({ digest }: { digest: NightDigest }) {
       {digest.rows.length === 0 ? (
         <p class="mute">nothing ran</p>
       ) : (
-        <table>
+        <table class="digest">
           <thead>
             <tr>
-              <th>job</th>
-              <th>owner</th>
-              <th>runs</th>
-              <th>retries</th>
-              <th>last status</th>
-              <th>last error</th>
-              <th>first</th>
-              <th>last</th>
+              {COLUMNS.map((column) => (
+                <th>{column.label}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {digest.rows.map((row) => (
               <tr class={row.retries >= 3 || row.status === 'fail' ? 'warn' : undefined}>
-                <td>{row.job}</td>
-                <td>{orDash(row.owner)}</td>
-                <td>{row.runs}</td>
-                <td>{row.retries}</td>
-                <td>{row.status}</td>
-                <td>{orDash(row.error)}</td>
-                <td>{row.firstAt}</td>
-                <td>{row.lastAt}</td>
+                {COLUMNS.map((column) => (
+                  <td data-label={column.label}>{column.cell(row)}</td>
+                ))}
               </tr>
             ))}
           </tbody>
