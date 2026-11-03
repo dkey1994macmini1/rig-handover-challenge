@@ -2,7 +2,7 @@
 // through here, so the filename policy, the file type policy and the event semantics live in one
 // place.
 
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DigestRow, DigestStatus, EventCounts, NightDigest, NightRead } from './types.js';
 
@@ -32,10 +32,23 @@ export function readNight(runsDir: string, night: string): NightRead {
       const stat = fstatSync(fd);
       if (!stat.isFile()) return { ok: false, reason: 'unreadable' };
       if (stat.size > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
-      const text = readFileSync(fd, 'utf8');
-      // The file can have grown between the fstat and the read: judge the bytes we actually got.
-      if (Buffer.byteLength(text) > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
-      return { ok: true, digest: digestNight(night, text) };
+      // Read at most one byte past what the file promised: the file can grow between the fstat and
+      // the read, and a bounded read is the only way that stays a bound on time and memory.
+      const limit = Math.min(stat.size, MAX_NIGHT_BYTES) + 1;
+      const bytes = Buffer.allocUnsafe(limit);
+      let read = 0;
+      let grew = false;
+      for (;;) {
+        const chunk = readSync(fd, bytes, read, limit - read, null);
+        if (chunk === 0) break;
+        read += chunk;
+        if (read < limit) continue;
+        const probe = Buffer.allocUnsafe(1);
+        grew = readSync(fd, probe, 0, 1, null) > 0;
+        break;
+      }
+      if (grew || read > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
+      return { ok: true, digest: digestNight(night, bytes.toString('utf8', 0, read)) };
     } finally {
       closeSync(fd);
     }

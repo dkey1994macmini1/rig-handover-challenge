@@ -317,8 +317,16 @@ describe('readNight', () => {
         '{"at":"2026-10-29T04:00:01+01:00","job":"notes/backup","status":"fail","owner":"lane-07","error":"quota exceeded"}',
         '{"at":"2026-10-29T04:10:01+01:00","job":"notes/backup","status":"retry","owner":"lane-07","error":"quota exceeded"}',
         '{"at":"2026-10-29T04:20:01+01:00","job":"notes/backup","status":"ok","owner":"lane-07"}',
-        '{"at":"2026-10-29T04:30:01+01:00","job":"notes/backup","status":"fail","owner":"lane-07","error":"quota exceeded"}',
       ].join('\n') + '\n',
+    );
+
+    // The success in the middle must clear the earlier failure, not just be outvoted later.
+    expect(digestOf().rows[0]).toMatchObject({ status: 'ok', error: null });
+
+    writeFileSync(
+      join(runsDir, '2026-10-28.jsonl'),
+      '{"at":"2026-10-29T04:30:01+01:00","job":"notes/backup","status":"fail","owner":"lane-07","error":"disk full"}\n',
+      { flag: 'a' },
     );
 
     const digest = digestOf();
@@ -329,7 +337,8 @@ describe('readNight', () => {
       runs: 4,
       retries: 1,
       status: 'fail',
-      error: 'quota exceeded',
+      // A different message, so a sticky first error cannot pass as the last one.
+      error: 'disk full',
       lastAt: '2026-10-29T04:30:01+01:00',
     });
   });
@@ -409,15 +418,21 @@ describe('readNight', () => {
     expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
   });
 
-  it('reports a night past the size cap as unreadable and reads one under it', () => {
+  it('reports a night past the size cap as unreadable and still reads one at exactly the cap', () => {
     const file = join(runsDir, '2026-10-28.jsonl');
-    writeNight('{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok"}\n');
+    const event = '{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok"}';
+    writeNight(`${event}\n`);
 
     // Under the cap, a real night reads as usual.
     expect(digestOf().rows).toHaveLength(1);
 
+    // Exactly at the cap: one valid event, then one unparsable line filling the rest of the bytes.
+    const cap = 4 * 1024 * 1024;
+    writeNight(`${event}\n${'x'.repeat(cap - event.length - 2)}\n`);
+    expect(readNight(runsDir, '2026-10-28')).toMatchObject({ ok: true, digest: { badLines: 1 } });
+
     // Sparse, so the cap costs no disk: the size alone is what the reader refuses.
-    truncateSync(file, 4 * 1024 * 1024 + 1);
+    truncateSync(file, cap + 1);
 
     expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
   });
@@ -442,12 +457,12 @@ describe('readNight', () => {
       timedOut = true;
       child.kill('SIGKILL');
     }, 3_000);
-    const exitCode = await new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+    const finished = await new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
     clearTimeout(killer);
 
     expect(timedOut).toBe(false);
     expect(Date.now() - started).toBeLessThan(3_000);
-    expect(exitCode).toBe(0);
+    expect(finished).toBe(0);
     expect(Buffer.concat(chunks).toString()).toBe(JSON.stringify({ ok: false, reason: 'unreadable' }));
   }, 10_000);
 });
