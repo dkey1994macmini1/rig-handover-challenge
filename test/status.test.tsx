@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -96,6 +96,20 @@ describe('status board nights', () => {
     expect(html).toContain('<a href="/digest/2026-10-28">2026-10-28</a>');
     expect(html).not.toContain('/digest/2026-10-27');
     expect(html).not.toContain('notes.txt');
+  });
+
+  it('does not list or link a night hardlinked to a file outside runs/', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'rig-outside-'));
+    const outside = join(outsideDir, 'elsewhere.jsonl');
+    writeFileSync(outside, '{"at":"2026-10-28T23:00:02+01:00","job":"outside/job","status":"ok"}\n');
+    linkSync(outside, join(runsDir, '2026-10-28.jsonl'));
+
+    const html = await board();
+
+    expect(html).not.toContain('/digest/2026-10-28');
+    expect(html).not.toContain('outside/job');
+
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 
   it('shows nothing in runs/ for a runs directory that is there and empty', async () => {

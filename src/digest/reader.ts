@@ -19,7 +19,7 @@ const STATUSES: readonly DigestStatus[] = ['ok', 'retry', 'fail'];
 // well under anything that would hurt; a bigger file is a fault, not a digest.
 const MAX_NIGHT_BYTES = 4 * 1024 * 1024;
 
-type Event = { at: string; job: string; status: DigestStatus; owner: string | null; error: string | null };
+type Event = { at: string; job: string; status: DigestStatus; owner?: string | null; error?: string };
 
 export function readNight(runsDir: string, night: string): NightRead {
   if (!NIGHT.test(night)) return { ok: false, reason: 'invalid' };
@@ -31,6 +31,9 @@ export function readNight(runsDir: string, night: string): NightRead {
     try {
       const stat = fstatSync(fd);
       if (!stat.isFile()) return { ok: false, reason: 'unreadable' };
+      // A night file is written where it is read. A second link means this inode is reachable
+      // outside runs/, which is exactly what the configured directory is supposed to bound.
+      if (stat.nlink > 1) return { ok: false, reason: 'unreadable' };
       if (stat.size > MAX_NIGHT_BYTES) return { ok: false, reason: 'unreadable' };
       // Read at most one byte past what the file promised: the file can grow between the fstat and
       // the read, and a bounded read is the only way that stays a bound on time and memory.
@@ -73,16 +76,17 @@ export function listNights(runsDir: string): { ok: true; nights: string[] } | { 
   const nights = names
     .filter((name) => NIGHT_FILE.test(name))
     .map((name) => name.slice(0, -NIGHT_SUFFIX.length))
-    .filter((night) => isRegularFile(join(runsDir, `${night}${NIGHT_SUFFIX}`)))
+    .filter((night) => isNightFile(join(runsDir, `${night}${NIGHT_SUFFIX}`)))
     .sort()
     .reverse();
   return { ok: true, nights };
 }
 
-/** lstat, so a symlink to a night file is never listed as a night. */
-function isRegularFile(path: string): boolean {
+/** lstat, so a symlink or a hardlinked file is never listed as a night. */
+function isNightFile(path: string): boolean {
   try {
-    return lstatSync(path).isFile();
+    const stat = lstatSync(path);
+    return stat.isFile() && stat.nlink === 1;
   } catch {
     return false;
   }
@@ -107,21 +111,20 @@ function digestNight(night: string, text: string): NightDigest {
     counts[event.status]++;
     const row = byJob.get(event.job);
     if (row === undefined) {
-      byJob.set(event.job, {
+      const fresh: DigestRow = {
         job: event.job,
-        owner: event.owner,
         runs: 1,
         retries: event.status === 'retry' ? 1 : 0,
         status: event.status,
-        error: event.error,
         firstAt: event.at,
         lastAt: event.at,
-      });
+      };
+      carryOptionalFields(fresh, event);
+      byJob.set(event.job, fresh);
     } else {
-      // Source-line order: the last valid event wins, including its absent fields.
-      row.owner = event.owner;
+      // Source-line order: the last valid event wins, and a field it never carried is absent again.
+      carryOptionalFields(row, event);
       row.status = event.status;
-      row.error = event.error;
       row.lastAt = event.at;
       row.runs++;
       if (event.status === 'retry') row.retries++;
@@ -130,6 +133,14 @@ function digestNight(night: string, text: string): NightDigest {
 
   const rows = [...byJob.values()].sort((a, b) => (a.job < b.job ? -1 : a.job > b.job ? 1 : 0));
   return { night, rows, badLines, counts };
+}
+
+/** The log's shape, kept: an absent field stays absent, an explicit null stays null. */
+function carryOptionalFields(row: DigestRow, event: Event): void {
+  if (event.owner === undefined) delete row.owner;
+  else row.owner = event.owner;
+  if (event.error === undefined) delete row.error;
+  else row.error = event.error;
 }
 
 function parseEvent(line: string): Event | null {
@@ -152,7 +163,7 @@ function parseEvent(line: string): Event | null {
     at,
     job,
     status: status as DigestStatus,
-    owner: typeof owner === 'string' ? owner : null,
-    error: typeof error === 'string' ? error : null,
+    ...(owner === undefined ? {} : { owner: typeof owner === 'string' ? owner : null }),
+    ...(error === undefined ? {} : { error }),
   };
 }

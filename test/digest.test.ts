@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -49,7 +49,6 @@ describe('readNight on the checked-in fixture', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T05:41:09+01:00',
         lastAt: '2026-10-29T05:41:09+01:00',
       },
@@ -59,7 +58,6 @@ describe('readNight on the checked-in fixture', () => {
         runs: 4,
         retries: 3,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T01:30:00+01:00',
         lastAt: '2026-10-29T01:37:00+01:00',
       },
@@ -69,7 +67,6 @@ describe('readNight on the checked-in fixture', () => {
         runs: 8,
         retries: 1,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:06+01:00',
         lastAt: '2026-10-29T05:00:04+01:00',
       },
@@ -89,11 +86,12 @@ describe('readNight on the checked-in fixture', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:02+01:00',
         lastAt: '2026-10-28T23:00:02+01:00',
       },
     ]);
+    // The log never wrote an error for four of the five jobs, so those rows carry no error key.
+    expect(digest.rows.filter((row) => 'error' in row)).toHaveLength(1);
     expect(readFileSync(fixture)).toEqual(bytes);
   });
 });
@@ -163,7 +161,6 @@ describe('readNight', () => {
     expect(digest.rows).toEqual([
       {
         job: 'lane/sync',
-        owner: null,
         runs: 1,
         retries: 0,
         status: 'fail',
@@ -174,7 +171,7 @@ describe('readNight', () => {
     ]);
   });
 
-  it('keeps rows whose owner is null or absent and leaves the field null', () => {
+  it('keeps rows whose owner is null or absent, and keeps the two apart', () => {
     writeNight(
       [
         '{"at":"2026-10-29T05:41:09+01:00","job":"digest/render","status":"ok","owner":null}',
@@ -191,13 +188,11 @@ describe('readNight', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T05:41:09+01:00',
         lastAt: '2026-10-29T05:41:09+01:00',
       },
       {
         job: 'notes/backup',
-        owner: null,
         runs: 1,
         retries: 0,
         status: 'fail',
@@ -206,6 +201,11 @@ describe('readNight', () => {
         lastAt: '2026-10-29T04:00:01+01:00',
       },
     ]);
+    // An explicit null is in the row; a field the log never carried is not.
+    expect('owner' in digest.rows[0]).toBe(true);
+    expect(digest.rows[0].owner).toBeNull();
+    expect('owner' in digest.rows[1]).toBe(false);
+    expect('error' in digest.rows[0]).toBe(false);
   });
 
   it('takes status, owner and error from the last valid event', () => {
@@ -225,7 +225,6 @@ describe('readNight', () => {
         runs: 2,
         retries: 1,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T01:30:00+01:00',
         lastAt: '2026-10-29T01:37:00+01:00',
       },
@@ -290,11 +289,9 @@ describe('readNight', () => {
     expect(digest.rows).toEqual([
       {
         job: 'fixtures/refresh',
-        owner: null,
         runs: 2,
         retries: 1,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T01:30:00+01:00',
         lastAt: '2026-10-29T01:37:00+01:00',
       },
@@ -304,11 +301,15 @@ describe('readNight', () => {
         runs: 2,
         retries: 1,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T02:00:00+01:00',
         lastAt: '2026-10-29T02:01:00+01:00',
       },
     ]);
+    // Omitted clears the field out of the row; an explicit null leaves it null.
+    expect('owner' in digest.rows[0]).toBe(false);
+    expect('error' in digest.rows[0]).toBe(false);
+    expect(digest.rows[1].owner).toBeNull();
+    expect('error' in digest.rows[1]).toBe(false);
   });
 
   it('ends a fail, ok, fail sequence on fail and counts only retry events as retries', () => {
@@ -321,7 +322,9 @@ describe('readNight', () => {
     );
 
     // The success in the middle must clear the earlier failure, not just be outvoted later.
-    expect(digestOf().rows[0]).toMatchObject({ status: 'ok', error: null });
+    const middle = digestOf().rows[0];
+    expect(middle).toMatchObject({ status: 'ok' });
+    expect('error' in middle).toBe(false);
 
     writeFileSync(
       join(runsDir, '2026-10-28.jsonl'),
@@ -385,7 +388,6 @@ describe('readNight', () => {
             runs: 1,
             retries: 0,
             status: 'ok',
-            error: null,
             firstAt: '2026-10-28T23:00:02+01:00',
             lastAt: '2026-10-28T23:00:02+01:00',
           },
@@ -416,6 +418,20 @@ describe('readNight', () => {
     symlinkSync(target, join(runsDir, '2026-10-28.jsonl'));
 
     expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
+  });
+
+  it('reports a night hardlinked to a file outside the runs directory as unreadable and unlisted', () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'rig-outside-'));
+    const outside = join(outsideDir, 'elsewhere.jsonl');
+    writeFileSync(outside, '{"at":"2026-10-28T23:00:02+01:00","job":"outside/job","status":"ok"}\n');
+    linkSync(outside, join(runsDir, '2026-10-28.jsonl'));
+
+    // The same inode is reachable outside runs/, so it is neither a night the reader opens nor one
+    // the board offers: the configured directory is the whole boundary.
+    expect(readNight(runsDir, '2026-10-28')).toEqual({ ok: false, reason: 'unreadable' });
+    expect(listNights(runsDir)).toEqual({ ok: true, nights: [] });
+
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 
   it('reports a night past the size cap as unreadable and still reads one at exactly the cap', () => {

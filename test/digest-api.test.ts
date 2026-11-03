@@ -42,7 +42,7 @@ describe('GET /api/digest/:night', () => {
     expect(body.badLines).toBe(1);
   });
 
-  it('carries every row field the page renders, nulls kept and timestamp offsets verbatim', async () => {
+  it('carries every row field the page renders, an explicit null kept and offsets verbatim', async () => {
     copyFixture(runsDir);
 
     const { body, text } = await get(`/api/digest/${NIGHT}`);
@@ -54,7 +54,6 @@ describe('GET /api/digest/:night', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T05:41:09+01:00',
         lastAt: '2026-10-29T05:41:09+01:00',
       },
@@ -64,7 +63,6 @@ describe('GET /api/digest/:night', () => {
         runs: 4,
         retries: 3,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-29T01:30:00+01:00',
         lastAt: '2026-10-29T01:37:00+01:00',
       },
@@ -74,7 +72,6 @@ describe('GET /api/digest/:night', () => {
         runs: 8,
         retries: 1,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:06+01:00',
         lastAt: '2026-10-29T05:00:04+01:00',
       },
@@ -94,14 +91,14 @@ describe('GET /api/digest/:night', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:02+01:00',
         lastAt: '2026-10-28T23:00:02+01:00',
       },
     ]);
-    // A field the log never carried is null in the body, not dropped from the object.
+    // An explicit null stays null; a field the log never carried is absent from the body.
     expect(text).toContain('"owner":null');
-    expect(text).toContain('"error":null');
+    expect(text).not.toContain('"error":null');
+    expect('error' in body.rows[0]).toBe(false);
   });
 
   it('counts malformed and off-shape lines and leaves them out of the rows', async () => {
@@ -129,13 +126,11 @@ describe('GET /api/digest/:night', () => {
         runs: 1,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:02+01:00',
         lastAt: '2026-10-28T23:00:02+01:00',
       },
       {
         job: 'notes/backup',
-        owner: null,
         runs: 1,
         retries: 0,
         status: 'fail',
@@ -160,11 +155,9 @@ describe('GET /api/digest/:night', () => {
     expect(body.rows).toEqual([
       {
         job: 'lane/sync',
-        owner: null,
         runs: 2,
         retries: 0,
         status: 'ok',
-        error: null,
         firstAt: '2026-10-28T23:00:02+01:00',
         lastAt: '2026-10-29T05:00:04-04:00',
       },

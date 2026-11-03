@@ -1,7 +1,7 @@
 import type { NightDigest } from '../digest/types.js';
 
 /** The styleguide's em dash: a field the log left empty reads like one it never carried. */
-const orDash = (text: string | null) => (text === null || text === '' ? '—' : text);
+const orDash = (text: string | null | undefined) => (text === undefined || text === null || text === '' ? '—' : text);
 
 /**
  * A night the reader could not read: a fault, not a missing night. One plain line, never a path and

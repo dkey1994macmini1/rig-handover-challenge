@@ -32,14 +32,15 @@ export async function request(runsDir: string, path: string): Promise<{ status: 
   return { status: res.status, text: await res.text() };
 }
 
-/** One row as the JSON carries it: the page's eight columns under the same names. */
+/** One row as the JSON carries it: the page's eight columns under the same names. A field the log
+ * never carried is absent here, exactly as the reader leaves it. */
 export type ApiRow = {
   job: string;
-  owner: string | null;
+  owner?: string | null;
   runs: number;
   retries: number;
   status: string;
-  error: string | null;
+  error?: string;
   firstAt: string;
   lastAt: string;
 };
@@ -60,7 +61,10 @@ export function rowsOf(html: string): { markup: string; cells: string[] }[] {
   }));
 }
 
+/** The styleguide's em dash: absent, null and empty all read the same way. */
+const dash = (text: string | null | undefined) => (text === undefined || text === null || text === '' ? '—' : text);
+
 /** The page's eight columns for one JSON row: what the log never carried is the em dash. */
 export function cellsOf(row: ApiRow): string[] {
-  return [row.job, row.owner ?? '—', String(row.runs), String(row.retries), row.status, row.error ?? '—', row.firstAt, row.lastAt];
+  return [row.job, dash(row.owner), String(row.runs), String(row.retries), row.status, dash(row.error), row.firstAt, row.lastAt];
 }

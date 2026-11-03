@@ -3,14 +3,17 @@
 
 export type DigestStatus = 'ok' | 'retry' | 'fail';
 
-/** One job's night. A field the log never carried stays null; the view renders the em dash. */
+/**
+ * One job's night. The optional fields carry the log's own shape: a field the last valid event
+ * never carried is absent from the row, and one it carried as an explicit null stays null.
+ */
 export type DigestRow = {
   job: string;
-  owner: string | null;
+  owner?: string | null;
   runs: number;
   retries: number;
   status: DigestStatus;
-  error: string | null;
+  error?: string;
   /** Source line order, timestamp string kept as written (offset never converted). */
   firstAt: string;
   lastAt: string;

@@ -3,7 +3,7 @@
 // answer: does one night get one answer on both endpoints, and do the input-to-file and
 // input-to-HTML boundaries hold when a request reaches them?
 
-import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NIGHT, cellsOf, copyFixture, parseNight, request, rowsOf, tempRuns, writeNight } from './support/nights.js';
@@ -132,6 +132,19 @@ describe('one night, both digest routes', () => {
     expect(json.text).toBe('');
   });
 
+  it('answers 500, never 404, when the night file is hardlinked outside runs/', async () => {
+    // The same inode under two names: runs/ holds one of them, the parent of runs/ the other.
+    const outside = join(root, 'elsewhere.jsonl');
+    writeFileSync(outside, '{"at":"2026-10-28T23:00:02+01:00","job":"outside/secret","status":"ok"}\n');
+    linkSync(outside, join(runsDir, `${NIGHT}.jsonl`));
+
+    const page = await get(`/digest/${NIGHT}`);
+    const json = await get(`/api/digest/${NIGHT}`);
+
+    expect([page.status, json.status]).toEqual([500, 500]);
+    for (const body of [page.text, json.text]) expect(body).not.toContain('outside/secret');
+  });
+
   it('answers an empty night as nothing ran with no rows', async () => {
     writeNight(runsDir, '');
 
@@ -169,7 +182,7 @@ describe('one night, both digest routes', () => {
     expect(page.text).toContain(`<p class="mute">${api.badLines} lines unreadable</p>`);
   });
 
-  it('renders a null owner as an em dash and keeps it null in the JSON', async () => {
+  it('renders a null owner as an em dash and keeps the field null in the JSON', async () => {
     writeNight(runsDir,
       [
         '{"at":"2026-10-29T05:41:09+01:00","job":"digest/render","status":"ok","owner":null}',
@@ -181,14 +194,16 @@ describe('one night, both digest routes', () => {
     const api = parseNight(json.text);
     const rows = rowsOf((await get(`/digest/${NIGHT}`)).text);
 
-    expect(api.rows.map((row) => row.owner)).toEqual([null, null]);
-    expect(api.rows.map((row) => row.error)).toEqual([null, 'quota exceeded']);
+    // digest/render carried an explicit null owner; notes/backup never carried an owner at all.
+    expect(api.rows.map((row) => row.owner)).toEqual([null, undefined]);
+    expect(api.rows.map((row) => row.error)).toEqual([undefined, 'quota exceeded']);
     expect(rows.map((row) => [row.cells[0], row.cells[1]])).toEqual([
       ['digest/render', '—'],
       ['notes/backup', '—'],
     ]);
-    // Null, not an absent key: a reader of the JSON can tell no owner from no field.
+    // Explicit null stays a null in the body; the field the log never carried is absent.
     expect(json.text).toContain('"owner":null');
+    expect('owner' in api.rows[1]).toBe(false);
   });
 
   it('marks three retries and a last failure on the page with the values the JSON carries', async () => {
