@@ -158,7 +158,8 @@ describe('readNight', () => {
 
     expect(digest.badLines).toBe(1);
     expect(digest.counts).toEqual({ ok: 0, retry: 0, fail: 1 });
-    expect(digest.rows).toEqual([
+    // toStrictEqual, so a row that carries owner: undefined instead of no owner fails here.
+    expect(digest.rows).toStrictEqual([
       {
         job: 'lane/sync',
         runs: 1,
@@ -169,6 +170,7 @@ describe('readNight', () => {
         lastAt: '2026-10-28T23:00:01+01:00',
       },
     ]);
+    expect('owner' in digest.rows[0]).toBe(false);
   });
 
   it('keeps rows whose owner is null or absent, and keeps the two apart', () => {
@@ -218,7 +220,8 @@ describe('readNight', () => {
 
     const digest = digestOf();
 
-    expect(digest.rows).toEqual([
+    // The first event's error must be gone, not held as undefined: strict equality sees both.
+    expect(digest.rows).toStrictEqual([
       {
         job: 'fixtures/refresh',
         owner: 'lane-07',
@@ -229,6 +232,7 @@ describe('readNight', () => {
         lastAt: '2026-10-29T01:37:00+01:00',
       },
     ]);
+    expect('error' in digest.rows[0]).toBe(false);
   });
 
   it('counts a retry that later succeeded as one retry and one ok event', () => {
@@ -377,7 +381,8 @@ describe('readNight', () => {
   it('turns a single valid event into one row', () => {
     writeNight('{"at":"2026-10-28T23:00:02+01:00","job":"lane/sync","status":"ok","owner":"rook"}\n');
 
-    expect(readNight(runsDir, '2026-10-28')).toEqual({
+    const read = readNight(runsDir, '2026-10-28');
+    expect(read).toStrictEqual({
       ok: true,
       digest: {
         night: '2026-10-28',
